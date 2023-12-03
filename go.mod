@@ -1,4 +1,4 @@
-module metricinterceptor
+module github.com/Ling-Qingran/metricinterceptor
 
 go 1.20
 
