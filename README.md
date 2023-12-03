@@ -20,4 +20,4 @@ Before using the `metricinterceptor` package, ensure you have the following:
 Install the package using `go get`:
 
 ```bash
-go get github.com/yourusername/metricinterceptor
+go get github.com/Ling-Qingran/metricinterceptor
