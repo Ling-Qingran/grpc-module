@@ -1,10 +1,11 @@
-package metricinterceptor
+package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
@@ -44,6 +45,7 @@ func MetricsInterceptor(ctx context.Context, req interface{}, info *grpc.UnarySe
 
 	// Get method name
 	methodName := info.FullMethod
+	//statusCode := status.Code(err).String()
 
 	// Extract peer information
 	p, ok := peer.FromContext(ctx)
@@ -102,7 +104,38 @@ func MetricsInterceptor(ctx context.Context, req interface{}, info *grpc.UnarySe
 	}
 
 	// Record metrics to InfluxDB (or print to console, log, etc.)
+	//writeMetrics(duration, err, reqSize, respSize, methodName, statusCode, requestCount, errorRate, ipAddress, userAgent)
 	return resp, err
+}
+
+func writeMetrics(duration time.Duration, err error, reqSize, respSize int, methodName, statusCode string, requestCount, errorRate int, ipAddress, userAgent string) {
+	// Create a new InfluxDB client
+	client := influxdb2.NewClient(serverURL, influxDBToken)
+	defer client.Close()
+
+	// Create a write API (this can be reused)
+	writeAPI := client.WriteAPI(influxDBOrg, influxDBBucket)
+
+	// Create a point to write (measurement name is "gRPCMetrics")
+	point := influxdb2.NewPoint(
+		"gRPCMetrics",
+		map[string]string{"endpoint": methodName, "ip_address": ipAddress, "user_agent": userAgent},
+		map[string]interface{}{
+			"duration":      duration.Seconds(),
+			"error":         err != nil,
+			"request_size":  reqSize,
+			"response_size": respSize,
+			"request_count": requestCount,
+			"error_rate":    errorRate,
+		},
+		time.Now(),
+	)
+
+	// Write the point
+	writeAPI.WritePoint(point)
+
+	// Ensure data is written
+	writeAPI.Flush()
 }
 
 func sendMetrics(metrics Metrics, centralRegisterWSURL string) error {
