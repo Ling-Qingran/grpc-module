@@ -2,11 +2,12 @@ package metricinterceptor
 
 import (
 	"context"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	"encoding/json"
+	"fmt"
+	"github.com/gorilla/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"log"
 	"net"
@@ -14,11 +15,21 @@ import (
 )
 
 const (
-	serverURL      = "http://34.86.236.100/"
-	influxDBToken  = "I_UycfPULIG3VFr6eT-b0EzSIESMVb6rxZlS3n49zwHAcmpjPXQPS4u0eaZNY69hsWIVErE--T3lodcHQyx5rA=="
+	serverURL      = "http://35.236.200.122:8086/"
+	influxDBToken  = "AxNHAn8hBBhsHz0o6HVJ2iM9gfGqybVWugTx5crw0o2yvkPTURsZqztPjxOXp4YWR2Hy9jiQPZePyilXFh7lcg=="
 	influxDBOrg    = "API-Observability"
 	influxDBBucket = "combined_metrics"
 )
+
+type Metrics struct {
+	InfluxDBURL string                 `json:"influxdb_url"`
+	Token       string                 `json:"token"`
+	Org         string                 `json:"org"`
+	Bucket      string                 `json:"bucket"`
+	Measurement string                 `json:"measurement"`
+	Tags        map[string]string      `json:"tags"`
+	Fields      map[string]interface{} `json:"fields"`
+}
 
 func MetricsInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	start := time.Now()
@@ -33,7 +44,6 @@ func MetricsInterceptor(ctx context.Context, req interface{}, info *grpc.UnarySe
 
 	// Get method name
 	methodName := info.FullMethod
-	statusCode := status.Code(err).String()
 
 	// Extract peer information
 	p, ok := peer.FromContext(ctx)
@@ -66,24 +76,14 @@ func MetricsInterceptor(ctx context.Context, req interface{}, info *grpc.UnarySe
 		}
 	}
 
-	// Record metrics to InfluxDB (or print to console, log, etc.)
-	writeMetrics(duration, err, reqSize, respSize, methodName, statusCode, requestCount, errorRate, ipAddress, userAgent)
-	return resp, err
-}
-
-func writeMetrics(duration time.Duration, err error, reqSize, respSize int, methodName, statusCode string, requestCount, errorRate int, ipAddress, userAgent string) {
-	// Create a new InfluxDB client
-	client := influxdb2.NewClient(serverURL, influxDBToken)
-	defer client.Close()
-
-	// Create a write API (this can be reused)
-	writeAPI := client.WriteAPI(influxDBOrg, influxDBBucket)
-
-	// Create a point to write (measurement name is "gRPCMetrics")
-	point := influxdb2.NewPoint(
-		"gRPCMetrics",
-		map[string]string{"endpoint": methodName, "ip_address": ipAddress, "user_agent": userAgent},
-		map[string]interface{}{
+	metrics := Metrics{
+		InfluxDBURL: serverURL,
+		Token:       influxDBToken,
+		Org:         influxDBOrg,
+		Bucket:      influxDBBucket,
+		Measurement: "Student-Info gRPC Service",
+		Tags:        map[string]string{"endpoint": methodName, "ip_address": ipAddress, "user_agent": userAgent},
+		Fields: map[string]interface{}{
 			"duration":      duration.Seconds(),
 			"error":         err != nil,
 			"request_size":  reqSize,
@@ -91,12 +91,41 @@ func writeMetrics(duration time.Duration, err error, reqSize, respSize int, meth
 			"request_count": requestCount,
 			"error_rate":    errorRate,
 		},
-		time.Now(),
-	)
+	}
 
-	// Write the point
-	writeAPI.WritePoint(point)
+	//fmt.Printf("metrics %v", metrics)
 
-	// Ensure data is written
-	writeAPI.Flush()
+	metricsErr := sendMetrics(metrics, "ws://localhost:8090/metrics")
+	if metricsErr != nil {
+		fmt.Printf("%v", metricsErr)
+		return nil, metricsErr
+	}
+
+	// Record metrics to InfluxDB (or print to console, log, etc.)
+	return resp, err
+}
+
+func sendMetrics(metrics Metrics, centralRegisterWSURL string) error {
+	// Serialize the Metrics struct into JSON
+	jsonData, err := json.Marshal(metrics)
+	if err != nil {
+		return err
+	}
+
+	// Connect to the WebSocket server
+	c, _, err := websocket.DefaultDialer.Dial(centralRegisterWSURL, nil)
+	if err != nil {
+		log.Println("dial:", err)
+		return err
+	}
+	defer c.Close()
+
+	// Send the JSON data to the WebSocket server
+	err = c.WriteMessage(websocket.TextMessage, jsonData)
+	if err != nil {
+		log.Println("write:", err)
+		return err
+	}
+
+	return nil
 }
