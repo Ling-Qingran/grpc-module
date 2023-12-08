@@ -1,4 +1,4 @@
-module github.com/Ling-Qingran/metricinterceptor
+module github.com/Ling-Qingran/grpc-module
 
 go 1.20
 
